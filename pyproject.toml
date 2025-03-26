@@ -1,0 +1,27 @@
+[project]
+name = "untron-v2"
+version = "0.1.0"
+description = "Efficiency-centric alternative to Untron V1, a P2P swapper from Tron"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+license = { text = "MIT License" }
+keywords = [
+  "security",
+  "library",
+  "ethereum",
+  "smart-contracts",
+  "evm",
+  "vyper",
+  "vyper-contracts",
+]
+authors = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+maintainers = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+
+[project.urls]
+Homepage = "https://github.com/ultrasoundlabs/untron-v2#readme"
+GitHub = "https://github.com/ultrasoundlabs/untron-v2"
+Changelog = "https://github.com/ultrasoundlabs/untron-v2/blob/main/CHANGELOG.md"
