@@ -26,7 +26,7 @@ initializes: ownable
 # Events
 # Events are emitted for all significant state changes to simplify off-chain tracking
 event OrderCreatorSet:
-    creator: address  # Address being granted/revoked order creation rights
+    creator: indexed(address)  # Address being granted/revoked order creation rights
     allowed: bool     # Whether the address is being allowed or disallowed
 
 event OrderDurationSet:
@@ -36,40 +36,42 @@ event ProverSet:
     prover: IProver    # New prover contract address for dispute resolution
 
 event Deposited:
-    provider: address  # LP address making the deposit
+    provider: indexed(address)  # LP address making the deposit
     amount: uint256    # Amount of USDT deposited
     rate: uint256      # Exchange rate set by LP (in basis points, e.g., 990000 = 0.99)
 
 event Withdrawn:
-    provider: address  # LP address making the withdrawal
+    provider: indexed(address)  # LP address making the withdrawal
     amount: uint256    # Amount of USDT withdrawn
 
 event ReceiversSet:
-    provider: address  # LP address setting receivers
+    provider: indexed(address)  # LP address setting receivers
     receivers: DynArray[bytes20, 1024]  # Array of Tron addresses where LP can receive USDT
 
 event ReceiversRemoved:
-    provider: address  # LP address removing receivers
+    provider: indexed(address)  # LP address removing receivers
     receivers: DynArray[bytes20, 1024]  # Array of Tron addresses being removed
 
 event OrderCreated:
-    receiver: bytes20  # Tron address where Tron USDT should be sent
-    creator: address   # Address creating the order
-    amount: uint256    # Amount of Tron USDT to be sent
-    rate: uint256      # Exchange rate for the order
-    timestamp: uint256 # Order creation timestamp
-    beneficiary: address  # Address to receive USDT on deployment chain
+    receiver: indexed(bytes20)    # Tron address where Tron USDT should be sent
+    lp: indexed(address)          # LP who owns the receiver address
+    creator: address              # Address creating the order
+    amount: uint256               # Amount of Tron USDT to be sent
+    rate: uint256                 # Exchange rate for the order
+    timestamp: uint256            # Order creation timestamp
+    beneficiary: indexed(address) # Address to receive USDT on deployment chain
 
 event OrderClosed:
-    receiver: bytes20  # Tron address associated with the closed order
-    atAmount: uint256  # Amount of Tron USDT that was actually sent
-    beneficiary: address  # Address that received the USDT on deployment chain
+    receiver: indexed(bytes20)    # Tron address associated with the closed order
+    lp: indexed(address)          # LP who owns the receiver address
+    atAmount: uint256             # Amount of Tron USDT that was actually sent
+    beneficiary: indexed(address) # Address that received the USDT on deployment chain
 
 event ClaimUpdated:
-    receiver: bytes20      # Tron address associated with the order
-    claimer: address       # Address updating the claim (Order Creator or LP)
-    amount: uint256       # New claim amount
-    isCreatorClaim: bool  # Whether this is the creator's claim (true) or LP's claim (false)
+    receiver: indexed(bytes20)  # Tron address associated with the order
+    claimer: indexed(address)   # Address updating the claim (Order Creator or LP)
+    amount: uint256             # New claim amount
+    isCreatorClaim: bool        # Whether this is the creator's claim (true) or LP's claim (false)
 
 # State Variables
 # Core contract configuration and state
@@ -311,7 +313,7 @@ def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: 
     self.receivers[receiver].order = order
     
     # Emit event for off-chain tracking
-    log OrderCreated(receiver, msg.sender, amount, order.rate, order.timestamp, beneficiary)
+    log OrderCreated(receiver, lp, msg.sender, amount, order.rate, order.timestamp, beneficiary)
 
 @external
 def setClaim(receiver: bytes20, amount: uint256):
@@ -375,7 +377,7 @@ def closeOrder(receiver: bytes20, atAmount: uint256):
     self.receivers[receiver].order.creator = empty(address)
 
     # Emit event for off-chain tracking
-    log OrderClosed(receiver, atAmount, beneficiary)
+    log OrderClosed(receiver, lp, atAmount, beneficiary)
 
 @external
 def proveClaim(receiver: bytes20, atAmount: uint256, proof: Bytes[4096]):
