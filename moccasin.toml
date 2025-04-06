@@ -46,10 +46,21 @@ chain_id = 31337
 url = "https://ethereum-sepolia-rpc.publicnode.com"
 chain_id = 11155111
 
+[networks.base]
+url = "https://mainnet.base.org"
+chain_id = 8453
+
+[networks.base-sepolia]
+url = "https://sepolia.base.org"
+chain_id = 84532
+
 [networks.zksync-sepolia]
 url = "https://sepolia.era.zksync.dev"
 chain_id = 300
 is_zksync = true
 prompt_live = true
+
+[networks.contracts]
+UntronV2 = {  deployer_script = "deploy.py" }
 
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html
