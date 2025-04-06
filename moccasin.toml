@@ -2,6 +2,36 @@
 src = "src"
 out = "out"
 dot_env = ".env"
+name = "untron-v2"
+version = "0.1.0"
+description = "Efficiency-centric alternative to Untron V1, a P2P swapper from Tron"
+requires-python = ">=3.10"
+keywords = [
+  "security",
+  "library",
+  "ethereum",
+  "smart-contracts",
+  "evm",
+  "vyper",
+  "vyper-contracts",
+]
+authors = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+maintainers = [
+  { name = "Ultrasound Labs", email = "contact@ultrasoundlabs.org" },
+]
+dependencies = ["pcaversaccio/snekmate"]
+
+[project.readme]
+file = "README.md"
+content-type = "text/markdown"
+[project.license]
+text = "MIT License"
+[project.urls]
+Homepage = "https://github.com/ultrasoundlabs/untron-v2#readme"
+GitHub = "https://github.com/ultrasoundlabs/untron-v2"
+Changelog = "https://github.com/ultrasoundlabs/untron-v2/blob/main/CHANGELOG.md"
 
 [networks.pyevm]
 is_zksync = false
