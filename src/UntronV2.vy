@@ -324,7 +324,7 @@ def setClaim(receiver: bytes20, amount: uint256):
     if self.receivers[receiver].order.creator == msg.sender:
         self.receivers[receiver].order.claims.creatorClaim = amount
         log ClaimUpdated(receiver, msg.sender, amount, True)
-    elif self.receivers[receiver].owner == msg.sender:
+    if self.receivers[receiver].owner == msg.sender:
         self.receivers[receiver].order.claims.lpClaim = amount
         log ClaimUpdated(receiver, msg.sender, amount, False)
     
