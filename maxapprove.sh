@@ -1,0 +1,2 @@
+source .env
+cast send $USDT_CONTRACT_ADDRESS "approve(address,uint256)" $UNTRON_CONTRACT_ADDRESS "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" --private-key $PRIVATE_KEY --rpc-url $RPC_URL
