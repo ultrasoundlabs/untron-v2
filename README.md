@@ -89,3 +89,32 @@ flowchart TD
     class CreateOrder,LockFunds,OrderActive,SendTronUSDT,UpdateClaims,OptimisticResolution,CloseOrder,ZKProof,CalculateSurrenderAmount,CalculateReimbursement,TransferToBeneficiary,ReturnUnusedLiquidity,ClearOrder,EmitEvent,CreatorUpdatesClaim,LPUpdatesClaim,ContinueNegotiating,WaitForExpiration,UpdateWithPartialAmount,UpdateWithZero process;
     class FailCreation,ProofFailed failpoint;
 ```
+
+## Mock Transfer Feature
+
+The relayer includes a mock transfer feature that allows simulating Tron USDT transfers without actually sending transactions on the Tron chain. This is useful for testing and development purposes.
+
+### Configuration
+
+To enable mock transfers, set the following environment variables in your `.env` file:
+
+```
+# Mock Transfer Configuration
+# Set to "true" to enable mock transfers (no actual Tron transactions)
+MOCK_TRANSFERS=true
+# Number of mock transfers to simulate (default: 5)
+MOCK_TRANSFER_COUNT=5
+# Delay between mock transfers in seconds (default: 10)
+MOCK_TRANSFER_DELAY=10
+```
+
+### How It Works
+
+When mock transfers are enabled:
+
+1. The relayer will divide the total order amount by the specified number of mock transfers
+2. It will simulate each transfer by updating the claim amount on Ethereum
+3. There will be a configurable delay between each mock transfer
+4. The relayer will log detailed information about each mock transfer
+
+This allows testing the full order lifecycle without requiring actual Tron transactions.
