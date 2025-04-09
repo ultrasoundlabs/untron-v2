@@ -342,6 +342,9 @@ def closeOrder(receiver: bytes20, atAmount: uint256):
     - Amount to send to beneficiary (surrenderAmount)
     - Amount to return to LP (reimbursementAmount)
     """
+    # Ensure that the order is not already closed
+    assert self.receivers[receiver].order.creator != empty(address), "order already closed"
+
     # Get the original order parameters
     orderAmount: uint256 = self.receivers[receiver].order.amount  # Original amount requested
     orderRate: uint256 = self.receivers[receiver].order.rate      # Original exchange rate

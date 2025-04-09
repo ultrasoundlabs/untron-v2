@@ -6,7 +6,6 @@ from web3 import Web3
 from tronpy import AsyncTron
 from tronpy.providers import AsyncHTTPProvider
 from dotenv import load_dotenv
-import aiohttp
 
 # Load environment variables
 load_dotenv()
@@ -238,7 +237,7 @@ async def mock_tron_transfers():
     if not MOCK_TRANSFERS:
         return
         
-    log_message(f"Starting mock Tron USDT transfers")
+    log_message("Starting mock Tron USDT transfers")
     
     try:
         while True:
