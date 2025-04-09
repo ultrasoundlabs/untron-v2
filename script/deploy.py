@@ -2,8 +2,9 @@ from src import UntronV2
 import boa
 
 def moccasin_main():
-    contract = UntronV2.deploy("0xd07308A887ffA74b8965C0F26e6E2e70072C97b9")
+    contract = UntronV2.deploy("0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9")
     contract.setOrderCreator(boa.env.eoa, True)
+    contract.setOrderCreator("0xf178905915f55dd34Ba1980942354dc64109118F", True)
     return contract
 
 

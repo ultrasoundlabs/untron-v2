@@ -79,12 +79,19 @@ class UntronV2CLI:
             # Get transaction parameters
             nonce = self.w3.eth.get_transaction_count(self.address)
             
+            # Get current base fee and add a buffer
+            base_fee = self.w3.eth.get_block('latest')['baseFeePerGas']
+            max_priority_fee = self.w3.eth.max_priority_fee
+            # Add 20% buffer to base fee to account for potential increases
+            max_fee_per_gas = int(base_fee * 1.2) + max_priority_fee
+            
             # Build the transaction
             tx = func(*args).build_transaction({
                 'from': self.address,
                 'nonce': nonce,
                 'gas': kwargs.get('gas', 2000000),  # Default gas limit
-                'gasPrice': self.w3.eth.gas_price,
+                'maxFeePerGas': max_fee_per_gas,
+                'maxPriorityFeePerGas': max_priority_fee,
                 'value': kwargs.get('value', 0)  # ETH value to send
             })
             
