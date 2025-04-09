@@ -397,7 +397,11 @@ async def scan_tron_usdt_transfers():
                                                 break
                     
                     except Exception as e:
-                        log_message(f"Error processing block {block_num}: {e}")
+                        # Log the full error message and stack trace for debugging
+                        import traceback
+                        error_msg = f"Error processing block {block_num}: {str(e)}\n{traceback.format_exc()}"
+                        log_message(error_msg)
+                        # Continue to next block
                         continue
                 
                 # Update the last processed block
