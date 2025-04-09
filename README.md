@@ -1,6 +1,37 @@
 # untron-v2
 Efficiency-centric alternative to Untron V1, a P2P swapper from Tron
 
+## Overview
+
+Untron V2 is a B2B P2P marketplace for exchanging USDT on Tron Network into EVM networks, [inspired by ZKP2P](https://zkp2p.xyz). Ethereum-based projects, such as wallets, who are willing to enable Tron USDT deposits, can integrate Untron V2 and create swap orders on behalf of their users.
+
+The primary difference between Untron V1 and Untron V2 is the introduction of claims architecture. In short, V2 requires each LP to actively listen for orders and deposits using the relayer software (e.g. run on a VPS). V1, in turn, relied on the ZKP relayer as the only source of truth, which allowed all LPs to passively act as liquidity providers and just rebalance liquidity between chains when needed (similar to ZKP2P).
+
+Even though this makes liquidity provision more complex and thus less attractive, it allows for a more fast and liquidity-efficient resolution of orders with no need for ZKPs for every order. In Untron V2, the ZK engine is only used for order disputes. V2 is also written in Vyper, unlike V1, which was written in Solidity. Everything else is roughly speaking the same.
+
+## Claims Architecture
+
+Each order has two claims:
+- creatorClaim: Amount the Order Creator claims to have sent in Tron USDT
+- lpClaim: Amount the LP claims to have received in Tron USDT
+
+Claims can be updated independently by each party up to the original order amount. Orders close automatically when claims match, avoiding the need for ZKPs.
+
+If claims don't match:
+1. Either party can submit a ZK proof after order expiration
+2. Parties can continue updating claims until agreement
+
+On order closure (via matching claims or ZK proof):
+- surrenderAmount = min(creatorClaim, lpClaim) sent to beneficiary
+- reimbursementAmount = unused liquidity returned to LP
+- Order marked closed and receiver freed
+
+This enables efficient resolution for cooperative parties while maintaining security through Untron's ZK engine when needed.
+
+_This entire section just read was written by an AI but it's fully correct I swear — Alex Hook_
+
+## Visual Overview
+
 ```mermaid
 flowchart TD
     Start([Start]) --> CreateOrder[Order Creator creates order]
@@ -90,31 +121,6 @@ flowchart TD
     class FailCreation,ProofFailed failpoint;
 ```
 
-## Mock Transfer Feature
+## Integrate
 
-The relayer includes a mock transfer feature that allows simulating Tron USDT transfers without actually sending transactions on the Tron chain. This is useful for testing and development purposes.
-
-### Configuration
-
-To enable mock transfers, set the following environment variables in your `.env` file:
-
-```
-# Mock Transfer Configuration
-# Set to "true" to enable mock transfers (no actual Tron transactions)
-MOCK_TRANSFERS=true
-# Number of mock transfers to simulate (default: 5)
-MOCK_TRANSFER_COUNT=5
-# Delay between mock transfers in seconds (default: 10)
-MOCK_TRANSFER_DELAY=10
-```
-
-### How It Works
-
-When mock transfers are enabled:
-
-1. The relayer will divide the total order amount by the specified number of mock transfers
-2. It will simulate each transfer by updating the claim amount on Ethereum
-3. There will be a configurable delay between each mock transfer
-4. The relayer will log detailed information about each mock transfer
-
-This allows testing the full order lifecycle without requiring actual Tron transactions.
+For integration, please proceed to [our documentation](https://ultrasoundlabs.github.io/untron-docs). You can also contact us at [contact@untron.finance](mailto:contact@untron.finance), [X account](https://x.com/untronfi), or [Telegram chat](https://t.me/untronchat).
