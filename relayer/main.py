@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 from web3 import Web3
 from tronpy import AsyncTron
+from tronpy.exceptions import BlockNotFound
 from tronpy.providers import AsyncHTTPProvider
 from dotenv import load_dotenv
 
@@ -355,7 +356,27 @@ async def scan_tron_usdt_transfers():
                 for block_num in range(last_block + 1, current_block + 1):
                     try:
                         # Get all transactions in the block
-                        block = await tron_client.get_block(block_num)
+                        max_retries = 3
+                        retry_delay = 2  # seconds
+                        for retry in range(max_retries):
+                            try:
+                                block = await tron_client.get_block(block_num)
+                                break
+                            except BlockNotFound:
+                                if retry < max_retries - 1:
+                                    log_message(f"Block {block_num} not found, retrying in {retry_delay} seconds... (attempt {retry + 1}/{max_retries})")
+                                    await asyncio.sleep(retry_delay)
+                                    continue
+                                else:
+                                    log_message(f"Block {block_num} not found after {max_retries} attempts, skipping...")
+                                    continue
+                            except Exception as e:
+                                raise e
+                        
+                        # If we got here and block is None, it means we exhausted retries
+                        if block is None:
+                            continue
+                            
                         log_message(f"Processing Tron block {block_num}")
                         
                         for tx in block['transactions']:
