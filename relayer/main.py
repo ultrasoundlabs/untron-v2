@@ -306,7 +306,7 @@ async def update_claim_on_eth(receiver_hex, claim_amount):
         signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
         
         # Send the transaction
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
         
         log_message(f"Claim update transaction sent: {tx_hash.hex()}")
         
