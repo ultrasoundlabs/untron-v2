@@ -356,12 +356,11 @@ async def scan_tron_usdt_transfers():
                     try:
                         # Get all transactions in the block
                         block = await tron_client.get_block(block_num)
-                        print(f"Processing Tron block {block_num}")
+                        log_message(f"Processing Tron block {block_num}")
                         
                         for tx in block['transactions']:
                             # Check if transaction was successful
                             if not tx.get('ret', [{}])[0].get('contractRet', '') == 'SUCCESS':
-                                print("unsuccessful tx")
                                 continue
                                 
                             # Check if it's a USDT transfer
