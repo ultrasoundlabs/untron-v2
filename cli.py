@@ -3,7 +3,6 @@ import json
 import argparse
 import sys
 from web3 import Web3
-from web3.middleware import geth_poa_middleware
 from eth_utils import to_checksum_address
 import os
 from dotenv import load_dotenv
@@ -45,8 +44,6 @@ class UntronV2CLI:
         
         # Connect to the blockchain
         self.w3 = Web3(Web3.HTTPProvider(self.rpc_url))
-        # Add middleware for POA networks like BNB Chain, Polygon, etc.
-        self.w3.middleware_onion.inject(geth_poa_middleware, layer=0)
         
         # Check connection
         if not self.w3.is_connected():
@@ -107,7 +104,7 @@ class UntronV2CLI:
             signed_tx = self.w3.eth.account.sign_transaction(tx, self.private_key)
             
             # Send the transaction
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.raw_transaction)
             
             # Wait for the transaction receipt
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash)
