@@ -1,12 +1,11 @@
 import asyncio
+from hashlib import sha256
 import os
 import json
 from datetime import datetime
 from web3 import Web3
-from tronpy import AsyncTron
-from tronpy.exceptions import BlockNotFound
-from tronpy.providers import AsyncHTTPProvider
 from dotenv import load_dotenv
+from aiohttp import ClientSession
 
 # Load environment variables
 load_dotenv()
@@ -22,8 +21,6 @@ MOCK_TRANSFERS = os.getenv("MOCK_TRANSFERS", "false").lower() == "true"
 MOCK_TRANSFER_COUNT = int(os.getenv("MOCK_TRANSFER_COUNT", "5"))
 # Delay between mock transfers in seconds
 MOCK_TRANSFER_DELAY = int(os.getenv("MOCK_TRANSFER_DELAY", "10"))
-# Delay between TronGrid API requests to avoid rate limiting
-TRONGRID_REQUEST_DELAY = int(os.getenv("TRONGRID_REQUEST_DELAY", "1"))
 
 # USDT TRC20 token contract address on Tron
 TRON_USDT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
@@ -33,107 +30,36 @@ CONTRACT_ABI = json.load(open("out/UntronV2.json"))["abi"]
 
 # Setup clients
 w3 = Web3(Web3.HTTPProvider(ETH_NODE))
-tron_client = AsyncTron(
-    AsyncHTTPProvider(
-        api_key=os.getenv("TRONGRID_API_KEY")
-    )
+contract = w3.eth.contract(
+    address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=CONTRACT_ABI
 )
-contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=CONTRACT_ABI)
 
 # Initialize Ethereum account
 account = w3.eth.account.from_key(PRIVATE_KEY)
 
-# Create aiohttp session
-http_client = None
+# Create locks for thread safety
+active_receivers_lock = asyncio.Lock()
+seen_txs_lock = asyncio.Lock()
 
-# Order Manager data structure
-active_orders = {}  # { receiver_address: { 'order': order_details, 'claim': current_claim } }
+# Dictionary to track active receivers and their order details
+active_receivers = {}
+seen_txs = {}
+
 
 # Helper functions
 def log_message(message):
     """Helper function to log messages with timestamps"""
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"[{timestamp}] {message}")
+    open("relayer/log.txt", "a").write(f"[{timestamp}] {message}\n")
 
-def eth_address_to_tron(eth_address):
-    """Convert Ethereum address format to Tron address format"""
-    # Ensure the address has the '0x' prefix
-    if not eth_address.startswith('0x'):
-        eth_address = '0x' + eth_address
-    return tron_client.to_base58check_address(eth_address)
 
-def tron_to_eth_address(tron_address):
-    """Convert Tron address to Ethereum address format"""
-    addr_hex = tron_client.to_hex(tron_address)
-    return addr_hex[2:]  # Remove '0x'
-
-def read_backup_block(backup_file):
-    """Read the last processed block number from the backup file"""
-    try:
-        if os.path.exists(backup_file):
-            with open(backup_file, 'r') as f:
-                content = f.read().strip()
-                if content:
-                    return int(content)
-    except Exception as e:
-        log_message(f"Error reading backup file: {e}")
-    return None
-
-def write_backup_block(block_number, backup_file):
-    """Write the last processed block number to the backup file"""
-    try:
-        with open(backup_file, 'w') as f:
-            f.write(str(block_number))
-        log_message(f"Backup updated: Block {block_number}")
-    except Exception as e:
-        log_message(f"Error writing to backup file: {e}")
-
-async def get_tron_block_by_timestamp(timestamp):
-    """Get the approximate Tron block number for a given timestamp using binary search"""
-    try:
-        # Get current block
-        current_block = await tron_client.get_latest_block_number()
-        current_block_info = await tron_client.get_block(current_block)
-        current_timestamp = current_block_info['block_header']['raw_data']['timestamp'] // 1000  # Convert from microseconds to seconds
-        
-        # If timestamp is in the future, return current block
-        if timestamp > current_timestamp:
-            return current_block
-            
-        # Binary search to find the block
-        left = 0
-        right = current_block
-        
-        while left <= right:
-            mid = (left + right) // 2
-            block_info = await tron_client.get_block(mid)
-            block_timestamp = block_info['block_header']['raw_data']['timestamp'] // 1000  # Convert from microseconds to seconds
-            
-            if block_timestamp == timestamp:
-                return mid
-            elif block_timestamp < timestamp:
-                left = mid + 1
-            else:
-                right = mid - 1
-                
-        # Return the closest block
-        return left
-    except Exception as e:
-        log_message(f"Error finding Tron block for timestamp {timestamp}: {e}")
-        return None
-
-# Ethereum Event Listeners
-async def listen_for_order_created():
-    """Listen for OrderCreated events on the Ethereum contract"""
-    log_message("Starting OrderCreated event listener...")
+async def listen_for_open_orders():
+    """Listen for open orders and process them"""
+    log_message("Starting open orders listener...")
     
-    # Get the last block from backup or start from current block
-    last_block = read_backup_block(BACKUP_FILE)
-    if last_block is None:
-        last_block = w3.eth.block_number
-        log_message(f"No backup found, starting from current block: {last_block}")
-    else:
-        log_message(f"Resuming from backup block: {last_block}")
+    # start from current block
+    last_block = w3.eth.block_number
     
     try:
         while True:
@@ -142,335 +68,184 @@ async def listen_for_order_created():
             
             # Only process if we have new blocks
             if current_block > last_block:
-                # Get events from the last processed block to the current block
-                events = contract.events.OrderCreated.get_logs(
-                    fromBlock=last_block + 1,
-                    toBlock=current_block
+                log_message(f"Processing blocks from {last_block + 1} to {current_block}")
+
+                # Get OrderCreated events
+                created_events = contract.events.OrderCreated.get_logs(
+                    from_block=last_block + 1,
+                    to_block=current_block
                 )
                 
-                for event in events:
+                # Get OrderClosed events
+                closed_events = contract.events.OrderClosed.get_logs(
+                    from_block=last_block + 1,
+                    to_block=current_block
+                )
+                
+                # Process OrderCreated events
+                for event in created_events:
                     args = event['args']
+                    receiver = args['receiver']
                     
-                    # Check if the LP is our account
-                    if args['lp'] == account.address:
-                        receiver = args['receiver'].hex()  # Convert bytes20 to hex string
-                        tron_receiver = eth_address_to_tron(receiver)
-                        
-                        log_message(f"New order detected for receiver: {tron_receiver}")
-                        log_message(f"Order details: Amount={args['amount']}, Rate={args['rate']}")
-                        
-                        # Initialize active order
-                        active_orders[receiver] = {
-                            'order': {
-                                'creator': args['creator'],
-                                'amount': args['amount'],
-                                'rate': args['rate'],
-                                'timestamp': args['timestamp'],
-                                'beneficiary': args['beneficiary']
-                            },
-                            'claim': 0,
-                            'tron_address': tron_receiver
-                        }
+                    async with active_receivers_lock:
+                        active_receivers[receiver] = 0
+                    log_message(f"New order created for receiver: {receiver.hex()}")
+                
+                # Process OrderClosed events  
+                for event in closed_events:
+                    args = event['args']
+                    receiver = args['receiver']
+                    
+                    async with active_receivers_lock:
+                        if receiver in active_receivers:
+                            del active_receivers[receiver]
+                            log_message(f"Order closed for receiver: {receiver.hex()}")
                 
                 # Update the last processed block and backup
                 last_block = current_block
-                write_backup_block(last_block, BACKUP_FILE)
             
             # Wait before checking for new events
             await asyncio.sleep(2)
+            
     except Exception as e:
-        log_message(f"Error in OrderCreated listener: {e}")
+        log_message(f"Error in open orders listener: {e}")
         # Restart the listener after a short delay
         await asyncio.sleep(5)
-        asyncio.create_task(listen_for_order_created())
+        asyncio.create_task(listen_for_open_orders())
 
-async def listen_for_order_closed():
-    """Listen for OrderClosed events on the Ethereum contract"""
-    log_message("Starting OrderClosed event listener...")
-    
-    # Get the last block from backup or start from current block
-    last_block = read_backup_block(BACKUP_FILE)
-    if last_block is None:
-        last_block = w3.eth.block_number
-        log_message(f"No backup found, starting from current block: {last_block}")
-    else:
-        log_message(f"Resuming from backup block: {last_block}")
-    
-    try:
+
+async def listen_for_usdt_transfers():
+    """Listen for USDT transfers and process them"""
+    async with ClientSession() as session:
+        # Get initial block number from getnowblock
+        try:
+            response = await session.get(
+                "https://api.trongrid.io/wallet/getnowblock",
+                headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
+            )
+            data = await response.json()
+            last_processed_block = data["block_header"]["raw_data"]["number"]
+            log_message(f"Starting from block: {last_processed_block}")
+        except Exception as e:
+            log_message(f"Error getting initial block: {str(e)}")
+            raise
+        
         while True:
-            # Get the current block number
-            current_block = w3.eth.block_number
-            
-            # Only process if we have new blocks
-            if current_block > last_block:
-                # Get events from the last processed block to the current block
-                events = contract.events.OrderClosed.get_logs(
-                    fromBlock=last_block + 1,
-                    toBlock=current_block
+            try:
+                # Always check current block before processing to ensure we don't go beyond the blockchain's latest block
+                response = await session.get(
+                    "https://api.trongrid.io/wallet/getnowblock",
+                    headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
                 )
+                data = await response.json()
+                current_block = data["block_header"]["raw_data"]["number"]
                 
-                for event in events:
-                    args = event['args']
-                    receiver = args['receiver'].hex()  # Convert bytes20 to hex string
-                    
-                    if receiver in active_orders:
-                        log_message(f"Order closed for receiver: {eth_address_to_tron(receiver)}")
-                        log_message(f"Final amount: {args['atAmount']}")
-                        
-                        # Remove the order from active orders
-                        del active_orders[receiver]
-                
-                # Update the last processed block and backup
-                last_block = current_block
-                write_backup_block(last_block, BACKUP_FILE)
-            
-            # Wait before checking for new events
-            await asyncio.sleep(2)
-    except Exception as e:
-        log_message(f"Error in OrderClosed listener: {e}")
-        # Restart the listener after a short delay
-        await asyncio.sleep(5)
-        asyncio.create_task(listen_for_order_closed())
-
-# Mock Tron Transfers
-async def mock_tron_transfers():
-    """Simulate Tron USDT transfers without actually sending transactions on the Tron chain"""
-    if not MOCK_TRANSFERS:
-        return
-        
-    log_message("Starting mock Tron USDT transfers")
-    
-    try:
-        while True:
-            # Exit if there are no active orders
-            if not active_orders:
-                await asyncio.sleep(10)
-                continue
-                
-            for receiver_hex, order_data in list(active_orders.items()):
-                tron_receiver = order_data['tron_address']
-                order = order_data['order']
-                current_claim = order_data['claim']
-                
-                # Calculate total amount and remaining amount
-                total_amount = order['amount']
-                remaining = total_amount - current_claim
-                
-                if remaining <= 0:
-                    continue
-                    
-                # Calculate mock transfer amount (1/5 of remaining or everything if small amount)
-                transfer_amount = min(remaining, remaining // 5 or remaining)
-                if transfer_amount == 0:
+                # Ensure we're not beyond the blockchain's latest block
+                if last_processed_block > current_block:
+                    await asyncio.sleep(1)
                     continue
                 
-                # Update the cumulative claim
-                new_claim = current_claim + transfer_amount
-                
-                # Log the mock transfer
-                log_message(f"Mock USDT Transfer to {tron_receiver}")
-                log_message(f"Amount: {transfer_amount/1_000_000} USDT")
-                log_message(f"New claim: {new_claim/1_000_000} USDT")
-                
-                # Update the claim on Ethereum
-                await update_claim_on_eth(receiver_hex, new_claim)
-                
-                # Update our local tracking
-                active_orders[receiver_hex]['claim'] = new_claim
-            
-            # Wait before the next mock transfer cycle
-            await asyncio.sleep(MOCK_TRANSFER_DELAY)
-    except Exception as e:
-        log_message(f"Error in mock Tron transfers: {e}")
-        # Restart the mock transfers after a short delay
-        await asyncio.sleep(5)
-        asyncio.create_task(mock_tron_transfers())
+                response = await session.get(
+                    f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events",
+                    params={
+                        "limit": "200"
+                    },
+                    headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
+                )
+                data = await response.json()
 
-# Claim Updater
-async def update_claim_on_eth(receiver_hex, claim_amount):
-    """Update the claim amount on the Ethereum contract"""
-    log_message(f"Updating claim for receiver {receiver_hex}: {claim_amount}")
-    
-    try:
-        # Convert hex string back to bytes
-        receiver_bytes = bytes.fromhex(receiver_hex)
-        
-        # Build the transaction
-        tx = contract.functions.setClaim(receiver_bytes, claim_amount).build_transaction({
-            'from': account.address,
-            'nonce': w3.eth.get_transaction_count(account.address),
-            'gas': 500000,  # Set appropriate gas limit
-            # Add gas price or max fee per gas if needed
-        })
-        
-        # Sign the transaction
-        signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
-        
-        # Send the transaction
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
-        
-        log_message(f"Claim update transaction sent: {tx_hash.hex()}")
-        
-        # Wait for transaction to be mined
-        receipt = w3.eth.wait_for_transaction_receipt(tx_hash)
-        
-        if receipt.status == 1:
-            log_message(f"Claim update successful: {claim_amount}")
-        else:
-            log_message(f"Claim update failed: {receipt}")
-    except Exception as e:
-        log_message(f"Error updating claim: {e}")
+                log_message(f"Processing {len(data['data'])} events of block {last_processed_block}")
 
-async def scan_tron_usdt_transfers():
-    """Continuously scan for USDT transfers on Tron and match them with active orders"""
-    log_message("Starting Tron USDT transfer scanner...")
-    
-    # Find the earliest order timestamp among active orders
-    earliest_timestamp = None
-    for order_data in active_orders.values():
-        order_timestamp = order_data['order']['timestamp']
-        if earliest_timestamp is None or order_timestamp < earliest_timestamp:
-            earliest_timestamp = order_timestamp
-    
-    if earliest_timestamp is None:
-        # If no active orders, start from current block
-        last_block = await tron_client.get_latest_block_number()
-        log_message(f"No active orders, starting from current block: {last_block}")
-    else:
-        # Convert timestamp to Tron block number
-        last_block = await get_tron_block_by_timestamp(earliest_timestamp)
-        if last_block is None:
-            last_block = await tron_client.get_latest_block_number()
-            log_message(f"Could not find block for timestamp {earliest_timestamp}, starting from current block: {last_block}")
-        else:
-            log_message(f"Starting from block {last_block} (timestamp: {earliest_timestamp})")
-    
-    try:
-        while True:
-            # Get the current block number
-            current_block = await tron_client.get_latest_block_number()
-            
-            # Only process if we have new blocks
-            if current_block > last_block:
-                # Get events from the last processed block to the current block
-                for block_num in range(last_block + 1, current_block + 1):
-                    try:
-                        # Get all transactions in the block
-                        max_retries = 3
-                        retry_delay = 2  # seconds
-                        for retry in range(max_retries):
-                            try:
-                                block = await tron_client.get_block(block_num)
-                                break
-                            except BlockNotFound:
-                                if retry < max_retries - 1:
-                                    log_message(f"Block {block_num} not found, retrying in {retry_delay} seconds... (attempt {retry + 1}/{max_retries})")
-                                    await asyncio.sleep(retry_delay)
-                                    continue
-                                else:
-                                    log_message(f"Block {block_num} not found after {max_retries} attempts, skipping...")
-                                    continue
-                            except Exception as e:
-                                raise e
-                        
-                        # If we got here and block is None, it means we exhausted retries
-                        if block is None:
-                            continue
-                            
-                        log_message(f"Processing Tron block {block_num}")
-                        
-                        for tx in block['transactions']:
-                            # Check if transaction was successful
-                            if not tx.get('ret', [{}])[0].get('contractRet', '') == 'SUCCESS':
-                                continue
-                                
-                            # Check if it's a USDT transfer
-                            if tx['raw_data']['contract'][0]['type'] == 'TriggerSmartContract':
-                                contract_address = tx['raw_data']['contract'][0]['parameter']['value']['contract_address']
-                                
-                                if contract_address == TRON_USDT_ADDRESS:
-                                    # Decode the transfer data
-                                    data = tx['raw_data']['contract'][0]['parameter']['value']['data']
-                                    if data.startswith('a9059cbb'):  # Transfer function signature
-                                        # Extract recipient and amount
-                                        recipient = '41' + data[32:72]  # Add Tron prefix
-                                        amount = int(data[72:], 16)
-                                        
-                                        # Convert recipient to base58 format
-                                        tron_recipient = tron_client.to_base58check_address(recipient)
-                                        
-                                        # Check if this recipient has an active order
-                                        for receiver_hex, order_data in list(active_orders.items()):
-                                            if order_data['tron_address'] == tron_recipient:
-                                                current_claim = order_data['claim']
-                                                new_claim = current_claim + amount
-                                                
-                                                # Update the claim on Ethereum
-                                                await update_claim_on_eth(receiver_hex, new_claim)
-                                                
-                                                # Update our local tracking
-                                                active_orders[receiver_hex]['claim'] = new_claim
-                                                
-                                                log_message(f"USDT Transfer detected for {tron_recipient}")
-                                                log_message(f"Amount: {amount/1_000_000} USDT")
-                                                log_message(f"New claim: {new_claim/1_000_000} USDT")
-                                                
-                                                break
-                    
-                    except Exception as e:
-                        # Log the full error message and stack trace for debugging
-                        import traceback
-                        error_msg = f"Error processing block {block_num}: {str(e)}\n{traceback.format_exc()}"
-                        log_message(error_msg)
-                        # Continue to next block
+                for event in data["data"]:
+                    if event["contract_address"] != TRON_USDT_ADDRESS or event["event_name"] != "Transfer":
                         continue
-                
-                # Update the last processed block
-                last_block = current_block
-            
-            # Wait before checking for new blocks
-            await asyncio.sleep(TRONGRID_REQUEST_DELAY)
-            
-    except Exception as e:
-        log_message(f"Error in Tron USDT transfer scanner: {e}")
-        # Restart the scanner after a short delay
-        await asyncio.sleep(5)
-        asyncio.create_task(scan_tron_usdt_transfers())
+                        
+                    event_hash = sha256(json.dumps(event).encode()).hexdigest()
 
-# Main function
+                    # Check if we've seen this transaction
+                    async with seen_txs_lock:
+                        if event_hash in seen_txs:
+                            continue
+                        seen_txs[event_hash] = True
+
+                    # Check if receiver is active
+                    async with active_receivers_lock:
+                        if (
+                            bytes.fromhex(event["result"]["to"][2:])
+                            in active_receivers
+                        ):
+                            log_message(
+                                f"USDT transfer received for receiver: {event['result']['to']}"
+                            )
+                            # Create task without waiting for completion
+                            asyncio.create_task(process_usdt_transfer(event))
+                            
+                # Update last processed block
+                last_processed_block += 1
+
+            except Exception as e:
+                log_message(f"Error in USDT transfer listener: {str(e)}")
+
+            await asyncio.sleep(1)
+
+
+async def process_usdt_transfer(event):
+    """Process USDT transfer event"""
+    receiver = bytes.fromhex(event["result"]["to"][2:])
+    amount = int(event["result"]["value"])
+    log_message(f"Processing USDT transfer for receiver: {receiver.hex()}, amount: {amount}")
+
+    async with active_receivers_lock:
+        if receiver not in active_receivers:
+            return  # Receiver no longer active
+        active_receivers[receiver] += amount
+        current_amount = active_receivers[receiver]
+
+    tx = contract.functions.setClaim(receiver, current_amount).build_transaction(
+        {
+            "from": account.address,
+            "nonce": w3.eth.get_transaction_count(account.address),
+            "gas": 1000000,
+        }
+    )
+    signed_tx = w3.eth.account.sign_transaction(tx, PRIVATE_KEY)
+    tx_hash = w3.eth.send_raw_transaction(signed_tx.raw_transaction)
+    log_message(f"Set claim transaction sent: {tx_hash.hex()}")
+
+
+async def mock_usdt_transfers():
+    """Simulate USDT transfers for testing purposes"""
+    while True:
+        async with active_receivers_lock:
+            if not active_receivers:
+                await asyncio.sleep(MOCK_TRANSFER_DELAY)
+                continue
+
+            # Get a random active receiver
+            receiver = next(iter(active_receivers))
+            amount = 10000000  # 10 USDT (6 decimals)
+
+            # Create mock event data
+            mock_event = {"result": {"to": receiver, "value": str(amount)}}
+
+            log_message(
+                f"Mock USDT transfer for receiver: {receiver}, amount: {amount}"
+            )
+            await process_usdt_transfer(mock_event)
+
+        await asyncio.sleep(MOCK_TRANSFER_DELAY)
+
+
 async def main():
-    """Main entry point for the relayer"""
-    log_message("Starting UntronV2 Relayer...")
-    log_message(f"Ethereum Node: {ETH_NODE}")
-    log_message(f"Contract Address: {CONTRACT_ADDRESS}")
-    log_message(f"LP Address: {account.address}")
-    
-    try:
-        # Create tasks for all services
-        order_created_task = asyncio.create_task(listen_for_order_created())
-        order_closed_task = asyncio.create_task(listen_for_order_closed())
-        
-        if MOCK_TRANSFERS:
-            tron_task = asyncio.create_task(mock_tron_transfers())
-        else:
-            tron_task = asyncio.create_task(scan_tron_usdt_transfers())
-        
-        # Wait for all tasks
-        await asyncio.gather(
-            order_created_task,
-            order_closed_task,
-            tron_task
-        )
-    except KeyboardInterrupt:
-        log_message("Relayer stopped by user")
-    except Exception as e:
-        log_message(f"Fatal error: {e}")
-    finally:
-        # Ensure http_client is closed when the program exits
-        global http_client
-        if http_client:
-            await http_client.close()
-            http_client = None
+    """Main function to run all tasks"""
+    tasks = [listen_for_open_orders(), listen_for_usdt_transfers()]
 
-if __name__ == '__main__':
+    if MOCK_TRANSFERS:
+        log_message("Mock transfers enabled - starting mock transfer simulation")
+        tasks.append(mock_usdt_transfers())
+
+    await asyncio.gather(*tasks)
+
+
+if __name__ == "__main__":
     asyncio.run(main())
