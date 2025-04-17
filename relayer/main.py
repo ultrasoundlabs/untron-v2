@@ -62,6 +62,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 # Helper functions
 def log_message(message):
     """Helper function to log messages with timestamps"""
@@ -73,56 +74,56 @@ def log_message(message):
 async def listen_for_open_orders():
     """Listen for open orders and process them"""
     log_message("Starting open orders listener...")
-    
+
     # start from current block
     last_block = w3.eth.block_number
-    
+
     try:
         while True:
             # Get the current block number
             current_block = w3.eth.block_number
-            
+
             # Only process if we have new blocks
             if current_block > last_block:
-                log_message(f"Processing blocks from {last_block + 1} to {current_block}")
+                log_message(
+                    f"Processing blocks from {last_block + 1} to {current_block}"
+                )
 
                 # Get OrderCreated events
                 created_events = contract.events.OrderCreated.get_logs(
-                    from_block=last_block + 1,
-                    to_block=current_block
+                    from_block=last_block + 1, to_block=current_block
                 )
-                
+
                 # Get OrderClosed events
                 closed_events = contract.events.OrderClosed.get_logs(
-                    from_block=last_block + 1,
-                    to_block=current_block
+                    from_block=last_block + 1, to_block=current_block
                 )
-                
+
                 # Process OrderCreated events
                 for event in created_events:
-                    args = event['args']
-                    receiver = args['receiver']
-                    
+                    args = event["args"]
+                    receiver = args["receiver"]
+
                     async with active_receivers_lock:
                         active_receivers[receiver] = 0
                     log_message(f"New order created for receiver: {receiver.hex()}")
-                
-                # Process OrderClosed events  
+
+                # Process OrderClosed events
                 for event in closed_events:
-                    args = event['args']
-                    receiver = args['receiver']
-                    
+                    args = event["args"]
+                    receiver = args["receiver"]
+
                     async with active_receivers_lock:
                         if receiver in active_receivers:
                             del active_receivers[receiver]
                             log_message(f"Order closed for receiver: {receiver.hex()}")
-                
+
                 # Update the last processed block and backup
                 last_block = current_block
-            
+
             # Wait before checking for new events
             await asyncio.sleep(2)
-            
+
     except Exception as e:
         log_message(f"Error in open orders listener: {e}")
         # Restart the listener after a short delay
@@ -145,7 +146,7 @@ async def listen_for_usdt_transfers():
         except Exception as e:
             log_message(f"Error getting initial block: {str(e)}")
             raise
-        
+
         while True:
             try:
                 # Always check current block before processing to ensure we don't go beyond the blockchain's latest block
@@ -155,27 +156,30 @@ async def listen_for_usdt_transfers():
                 )
                 data = await response.json()
                 current_block = data["block_header"]["raw_data"]["number"]
-                
+
                 # Ensure we're not beyond the blockchain's latest block
                 if last_processed_block > current_block:
                     await asyncio.sleep(1)
                     continue
-                
+
                 response = await session.get(
                     f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events",
-                    params={
-                        "limit": "200"
-                    },
+                    params={"limit": "200"},
                     headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
                 )
                 data = await response.json()
 
-                log_message(f"Processing {len(data['data'])} events of block {last_processed_block}")
+                log_message(
+                    f"Processing {len(data['data'])} events of block {last_processed_block}"
+                )
 
                 for event in data["data"]:
-                    if event["contract_address"] != TRON_USDT_ADDRESS or event["event_name"] != "Transfer":
+                    if (
+                        event["contract_address"] != TRON_USDT_ADDRESS
+                        or event["event_name"] != "Transfer"
+                    ):
                         continue
-                        
+
                     event_hash = sha256(json.dumps(event).encode()).hexdigest()
 
                     # Check if we've seen this transaction
@@ -186,16 +190,13 @@ async def listen_for_usdt_transfers():
 
                     # Check if receiver is active
                     async with active_receivers_lock:
-                        if (
-                            bytes.fromhex(event["result"]["to"][2:])
-                            in active_receivers
-                        ):
+                        if bytes.fromhex(event["result"]["to"][2:]) in active_receivers:
                             log_message(
                                 f"USDT transfer received for receiver: {event['result']['to']}"
                             )
                             # Create task without waiting for completion
                             asyncio.create_task(process_usdt_transfer(event))
-                            
+
                 # Update last processed block
                 last_processed_block += 1
 
@@ -209,7 +210,9 @@ async def process_usdt_transfer(event):
     """Process USDT transfer event"""
     receiver = bytes.fromhex(event["result"]["to"][2:])
     amount = int(event["result"]["value"])
-    log_message(f"Processing USDT transfer for receiver: {receiver.hex()}, amount: {amount}")
+    log_message(
+        f"Processing USDT transfer for receiver: {receiver.hex()}, amount: {amount}"
+    )
 
     async with active_receivers_lock:
         if receiver not in active_receivers:
@@ -254,27 +257,49 @@ async def mock_usdt_transfers():
 
 @app.get("/status")
 async def get_status():
-    """API endpoint to show receiver addresses not currently active"""
+    """API endpoint to show receiver addresses not currently active and contract status"""
     available_receivers = []
-    
+
     async with active_receivers_lock:
         for addr in RECEIVER_ADDRESSES:
             if not addr:  # Skip empty addresses
                 continue
-            
+
             # Convert hex string to bytes for comparison with active_receivers keys
             addr_bytes = bytes.fromhex(addr)
-            
+
+            log_message(f"Active receivers: {active_receivers}")
+            log_message(f"addr_bytes: {addr_bytes}")
+
             if addr_bytes not in active_receivers:
                 available_receivers.append(addr)
-    
-    return {"availableReceivers": available_receivers}
+
+    # Get liquidity information
+    liquidity_info = {"status": "error", "availableLiquidity": 0, "rate": 0}
+    try:
+        lp_info = contract.functions.liquidityProviders(account.address).call()
+        liquidity_info = {
+            "status": "healthy",
+            "availableReceivers": available_receivers,
+            "availableLiquidity": lp_info[0],
+            "rate": lp_info[1],
+            "currentBlock": w3.eth.block_number,
+            "contractAddress": CONTRACT_ADDRESS,
+            "relayerAddress": account.address,
+        }
+    except Exception as e:
+        log_message(f"Error fetching liquidity data: {str(e)}")
+        liquidity_info["error"] = str(e)
+
+    return liquidity_info
+
 
 async def start_api():
     """Start the FastAPI server"""
     config = uvicorn.Config(app, host="0.0.0.0", port=8455, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
+
 
 async def main():
     """Main function to run all tasks"""
