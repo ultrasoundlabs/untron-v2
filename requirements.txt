@@ -3,3 +3,5 @@ aiohttp==3.10.10
 tronpy==0.5.0
 python-dotenv==1.0.1
 moccasin==0.3.8
+fastapi==0.115.12
+uvicorn==0.34.1
