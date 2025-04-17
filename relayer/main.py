@@ -6,6 +6,9 @@ from datetime import datetime
 from web3 import Web3
 from dotenv import load_dotenv
 from aiohttp import ClientSession
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 
 # Load environment variables
 load_dotenv()
@@ -21,6 +24,8 @@ MOCK_TRANSFERS = os.getenv("MOCK_TRANSFERS", "false").lower() == "true"
 MOCK_TRANSFER_COUNT = int(os.getenv("MOCK_TRANSFER_COUNT", "5"))
 # Delay between mock transfers in seconds
 MOCK_TRANSFER_DELAY = int(os.getenv("MOCK_TRANSFER_DELAY", "10"))
+# Receiver addresses from .env
+RECEIVER_ADDRESSES = os.getenv("RECEIVER_ADDRESSES", "").split(",")
 
 # USDT TRC20 token contract address on Tron
 TRON_USDT_ADDRESS = "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
@@ -45,6 +50,17 @@ seen_txs_lock = asyncio.Lock()
 active_receivers = {}
 seen_txs = {}
 
+# Initialize FastAPI app
+app = FastAPI(title="Untron Relayer API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Helper functions
 def log_message(message):
@@ -236,9 +252,33 @@ async def mock_usdt_transfers():
         await asyncio.sleep(MOCK_TRANSFER_DELAY)
 
 
+@app.get("/status")
+async def get_status():
+    """API endpoint to show receiver addresses not currently active"""
+    available_receivers = []
+    
+    async with active_receivers_lock:
+        for addr in RECEIVER_ADDRESSES:
+            if not addr:  # Skip empty addresses
+                continue
+            
+            # Convert hex string to bytes for comparison with active_receivers keys
+            addr_bytes = bytes.fromhex(addr)
+            
+            if addr_bytes not in active_receivers:
+                available_receivers.append(addr)
+    
+    return {"availableReceivers": available_receivers}
+
+async def start_api():
+    """Start the FastAPI server"""
+    config = uvicorn.Config(app, host="0.0.0.0", port=8455, log_level="info")
+    server = uvicorn.Server(config)
+    await server.serve()
+
 async def main():
     """Main function to run all tasks"""
-    tasks = [listen_for_open_orders(), listen_for_usdt_transfers()]
+    tasks = [listen_for_open_orders(), listen_for_usdt_transfers(), start_api()]
 
     if MOCK_TRANSFERS:
         log_message("Mock transfers enabled - starting mock transfer simulation")
