@@ -173,6 +173,9 @@ async def listen_for_usdt_transfers():
                     f"Processing {len(data['data'])} events of block {last_processed_block}"
                 )
 
+                if len(data["data"]) == 200:
+                    log_message(data, "debug")
+
                 for event in data["data"]:
                     if (
                         event["contract_address"] != TRON_USDT_ADDRESS

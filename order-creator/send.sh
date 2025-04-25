@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Example curl command to create an order with Untron V2
-curl -X POST "http://localhost:8456/create-order" \
+curl -X POST "https://untron.finance/api/v2-staging/create-order" \
   -H "Content-Type: application/json" \
   -d '{
     "receiver": "TXYkMwWaHrPFfepurnsqYngrji6vxxHkX9",
