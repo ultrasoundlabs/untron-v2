@@ -168,13 +168,8 @@ async def listen_for_usdt_transfers():
                     "headers": {"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
                 }
                 while next_req["url"]:
-                    log_message(next_req)
                     response = await session.get(**next_req)
                     data = await response.json()
-
-                    if not data.get("data"):
-                        log_message(data)
-                        break
 
                     log_message(
                         f"Processing {len(data['data'])} events of block {last_processed_block}"
@@ -197,7 +192,10 @@ async def listen_for_usdt_transfers():
 
                         # Check if receiver is active
                         async with active_receivers_lock:
-                            if bytes.fromhex(event["result"]["to"][2:]) in active_receivers:
+                            if (
+                                bytes.fromhex(event["result"]["to"][2:])
+                                in active_receivers
+                            ):
                                 log_message(
                                     f"USDT transfer received for receiver: {event['result']['to']}"
                                 )
@@ -210,7 +208,9 @@ async def listen_for_usdt_transfers():
                         "url": data.get("meta", {}).get("links", {}).get("next")
                     }
                     if next_req["url"]:
-                        log_message(f"Fetching next page of events from: {next_req}")
+                        log_message(
+                            f"Fetching next page of events from: {next_req['url']}"
+                        )
 
                 # Update last processed block
                 last_processed_block += 1
