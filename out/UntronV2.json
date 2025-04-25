@@ -232,6 +232,18 @@
         {
             "stateMutability": "nonpayable",
             "type": "function",
+            "name": "transfer_ownership",
+            "inputs": [
+                {
+                    "name": "new_owner",
+                    "type": "address"
+                }
+            ],
+            "outputs": []
+        },
+        {
+            "stateMutability": "nonpayable",
+            "type": "function",
             "name": "setOrderCreator",
             "inputs": [
                 {

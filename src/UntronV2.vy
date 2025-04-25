@@ -22,6 +22,7 @@ from ethereum.ercs import IERC20
 
 # Initialize ownable module for access control
 initializes: ownable
+exports: ownable.transfer_ownership
 
 # Events
 # Events are emitted for all significant state changes to simplify off-chain tracking
