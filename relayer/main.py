@@ -164,11 +164,11 @@ async def listen_for_usdt_transfers():
 
                 # Process all pages of events for the current block
                 next_req = {
-                    "url": f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events",
-                    "params": {"limit": "200"},
+                    "url": f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events?limit=200",
                     "headers": {"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
                 }
                 while next_req:
+                    log_message(next_req)
                     response = await session.get(**next_req)
                     data = await response.json()
 
