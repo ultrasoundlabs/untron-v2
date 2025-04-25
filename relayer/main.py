@@ -172,12 +172,13 @@ async def listen_for_usdt_transfers():
                     )
                     data = await response.json()
 
+                    if not data.get("data"):
+                        log_message(data)
+                        break
+
                     log_message(
                         f"Processing {len(data['data'])} events of block {last_processed_block}"
                     )
-
-                    if len(data["data"]) == 200:
-                        log_message(data)
 
                     for event in data["data"]:
                         if (
