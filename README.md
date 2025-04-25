@@ -5,11 +5,11 @@ Efficiency-centric alternative to Untron V1, a P2P swapper from Tron
 
 Untron V2 is a B2B P2P marketplace for exchanging USDT on Tron Network into EVM networks, [inspired by ZKP2P](https://zkp2p.xyz). Ethereum-based projects, such as wallets, who are willing to enable Tron USDT deposits, can integrate Untron V2 and create swap orders on behalf of their users.
 
-The primary difference between Untron V1 and Untron V2 is the introduction of claims architecture. In short, V2 requires each LP to actively listen for orders and deposits using the relayer software (e.g. run on a VPS). V1, in turn, relied on the ZKP relayer as the only source of truth, which allowed all LPs to passively act as liquidity providers and just rebalance liquidity between chains when needed (similar to ZKP2P).
+The primary difference between Untron V1 and Untron V2 is the introduction of claims architecture. In short, V2 requires each LP to actively listen for orders and deposits using the relayer software (e.g. run on a VPS) and participate in order resolution onchain. V1, in turn, relied on the ZKP relayer as the only source of truth, which allowed all LPs to passively act as just the liquidity providers and just rebalance liquidity between chains when needed (similar to ZKP2P).
 
-Even though this makes liquidity provision more complex and thus less attractive, it allows for a more fast and liquidity-efficient resolution of orders with no need for ZKPs for every order. In Untron V2, the ZK engine is only used for order disputes. V2 is also written in Vyper, unlike V1, which was written in Solidity. Everything else is roughly speaking the same.
+Even though this makes liquidity provision more complex and thus less attractive, it allows for a more fast and liquidity-efficient resolution of orders without need for ZKPs for every order. In Untron V2, the ZK engine is only used for order disputes. V2 is also written in Vyper, unlike V1, which was written in Solidity, and has much cleaner codebase. Everything else is roughly the same.
 
-## Claims Architecture
+### Claims Architecture
 
 Each order has two claims:
 - creatorClaim: Amount the Order Creator claims to have sent in Tron USDT
@@ -28,7 +28,7 @@ On order closure (via matching claims or ZK proof):
 
 This enables efficient resolution for cooperative parties while maintaining security through Untron's ZK engine when needed.
 
-_This entire section just read was written by an AI but it's fully correct I swear — Alex Hook_
+_This entire section above was written by an AI but it's fully correct I swear — Alex Hook_
 
 ## Visual Overview
 
@@ -121,6 +121,19 @@ flowchart TD
     class FailCreation,ProofFailed failpoint;
 ```
 
+## Repo Structure
+
+- [`src/`](src/) — Untron V2's smart contracts written in Vyper
+- [`tests/`](tests/) — tests for the contracts
+- [`script/`](script/) — deployment scripts for the contracts
+- [`out/`](out/) — ABI etc
+- [`relayer/`](relayer/) — reference implementation of the Liquidity Provider's relayer. It's operational but insecure and unaudited, don't use in production!
+- [`order-creator/`](order-creator/) — example usage of Untron V2's contracts as an order creator. Same as the relayer, don't use in production.
+
+Otherwise it's a normal Moccasin (Vyper) project, so you should be able to use [Moccasin's docs](https://cyfrin.github.io/moccasin/) to figure out how to build, test, deploy etc. All other Vyper tooling should work too.
+
+You're encouraged to experiment with the protocol, build your own implementations for the relayer and order creator, and integrate it wherever you want. However, please note that Untron V2 is a new protocol and many things are subject to change, so you should always communicate with us (see section below) to keep up to date.
+
 ## Integrate
 
-For integration, please proceed to [our documentation](https://ultrasoundlabs.github.io/untron-docs). You can also contact us at [contact@untron.finance](mailto:contact@untron.finance), [X account](https://x.com/untronfi), or [Telegram chat](https://t.me/untronchat).
+Integrate. But first, please contact us at [contact@untron.finance](mailto:contact@untron.finance), [X account](https://x.com/untronfi), or [public Telegram chat](https://t.me/untronchat). We'll walk you through the process and help you get started.
