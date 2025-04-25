@@ -174,7 +174,7 @@ async def listen_for_usdt_transfers():
                 )
 
                 if len(data["data"]) == 200:
-                    log_message(data, "debug")
+                    log_message(data)
 
                 for event in data["data"]:
                     if (
