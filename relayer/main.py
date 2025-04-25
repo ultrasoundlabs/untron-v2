@@ -163,13 +163,13 @@ async def listen_for_usdt_transfers():
                     continue
 
                 # Process all pages of events for the current block
-                next_url = f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events"
-                while next_url:
-                    response = await session.get(
-                        next_url,
-                        params={"limit": "200"},
-                        headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
-                    )
+                next_req = {
+                    "url": f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events",
+                    "params": {"limit": "200"},
+                    "headers": {"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
+                }
+                while next_req:
+                    response = await session.get(**next_req)
                     data = await response.json()
 
                     if not data.get("data"):
@@ -205,9 +205,12 @@ async def listen_for_usdt_transfers():
                                 asyncio.create_task(process_usdt_transfer(event))
 
                     # Check if there are more pages to process
-                    next_url = data.get("meta", {}).get("links", {}).get("next")
-                    if next_url:
-                        log_message(f"Fetching next page of events from: {next_url}")
+                    # idk why but second and other pages don't require api keys and limit
+                    next_req = {
+                        "url": data.get("meta", {}).get("links", {}).get("next")
+                    }
+                    if next_req["url"]:
+                        log_message(f"Fetching next page of events from: {next_req}")
 
                 # Update last processed block
                 last_processed_block += 1
