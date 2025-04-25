@@ -162,43 +162,51 @@ async def listen_for_usdt_transfers():
                     await asyncio.sleep(1)
                     continue
 
-                response = await session.get(
-                    f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events",
-                    params={"limit": "200"},
-                    headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
-                )
-                data = await response.json()
+                # Process all pages of events for the current block
+                next_url = f"https://api.trongrid.io/v1/blocks/{last_processed_block}/events"
+                while next_url:
+                    response = await session.get(
+                        next_url,
+                        params={"limit": "200"},
+                        headers={"TRON-PRO-API-KEY": os.getenv("TRONGRID_API_KEY")},
+                    )
+                    data = await response.json()
 
-                log_message(
-                    f"Processing {len(data['data'])} events of block {last_processed_block}"
-                )
+                    log_message(
+                        f"Processing {len(data['data'])} events of block {last_processed_block}"
+                    )
 
-                if len(data["data"]) == 200:
-                    log_message(data)
+                    if len(data["data"]) == 200:
+                        log_message(data)
 
-                for event in data["data"]:
-                    if (
-                        event["contract_address"] != TRON_USDT_ADDRESS
-                        or event["event_name"] != "Transfer"
-                    ):
-                        continue
-
-                    event_hash = sha256(json.dumps(event).encode()).hexdigest()
-
-                    # Check if we've seen this transaction
-                    async with seen_txs_lock:
-                        if event_hash in seen_txs:
+                    for event in data["data"]:
+                        if (
+                            event["contract_address"] != TRON_USDT_ADDRESS
+                            or event["event_name"] != "Transfer"
+                        ):
                             continue
-                        seen_txs[event_hash] = True
 
-                    # Check if receiver is active
-                    async with active_receivers_lock:
-                        if bytes.fromhex(event["result"]["to"][2:]) in active_receivers:
-                            log_message(
-                                f"USDT transfer received for receiver: {event['result']['to']}"
-                            )
-                            # Create task without waiting for completion
-                            asyncio.create_task(process_usdt_transfer(event))
+                        event_hash = sha256(json.dumps(event).encode()).hexdigest()
+
+                        # Check if we've seen this transaction
+                        async with seen_txs_lock:
+                            if event_hash in seen_txs:
+                                continue
+                            seen_txs[event_hash] = True
+
+                        # Check if receiver is active
+                        async with active_receivers_lock:
+                            if bytes.fromhex(event["result"]["to"][2:]) in active_receivers:
+                                log_message(
+                                    f"USDT transfer received for receiver: {event['result']['to']}"
+                                )
+                                # Create task without waiting for completion
+                                asyncio.create_task(process_usdt_transfer(event))
+
+                    # Check if there are more pages to process
+                    next_url = data.get("meta", {}).get("links", {}).get("next")
+                    if next_url:
+                        log_message(f"Fetching next page of events from: {next_url}")
 
                 # Update last processed block
                 last_processed_block += 1
