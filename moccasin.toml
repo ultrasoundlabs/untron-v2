@@ -58,6 +58,10 @@ chain_id = 84532
 url = "https://arb1.arbitrum.io/rpc"
 chain_id = 42161
 
+[networks.optimism]
+url = "https://mainnet.optimism.io"
+chain_id = 10
+
 [networks.zksync-sepolia]
 url = "https://sepolia.era.zksync.dev"
 chain_id = 300
@@ -66,5 +70,6 @@ prompt_live = true
 
 [networks.contracts]
 UntronV2 = {  deployer_script = "deploy.py" }
+UntronV2_1 = { deployer_script = "deploy_v2_1.py" }
 
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html

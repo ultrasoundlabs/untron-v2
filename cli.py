@@ -65,7 +65,7 @@ class UntronV2CLI:
         print(f"Contract address: {self.contract_address}")
     
     def load_abi(self):
-        return json.load(open("out/UntronV2.json"))["abi"]
+        return json.load(open("out/UntronV2_1.json"))["abi"]
 
     def _build_tx(self, function, *args, **kwargs):
         """Build a transaction with appropriate gas settings"""
@@ -149,6 +149,13 @@ class UntronV2CLI:
             return self._send_tx(tx)
         return None
 
+    def set_chain_info(self, chain_id, oft, dst_eid, usdt_fee):
+        """Set the chain info"""
+        tx = self._build_tx("setChainInfo", int(chain_id), to_checksum_address(oft), int(dst_eid), int(usdt_fee))
+        if tx:
+            return self._send_tx(tx)
+        return None
+
     def deposit(self, amount, rate):
         """Deposit funds into the contract"""
         tx = self._build_tx("deposit", int(amount), int(rate))
@@ -181,10 +188,10 @@ class UntronV2CLI:
             return self._send_tx(tx)
         return None
 
-    def create_order(self, receiver, amount, rate, beneficiary):
+    def create_order(self, receiver, amount, rate, beneficiary, chain_id):
         """Create a new order"""
         bytes_receiver = base58_to_bytes(receiver)
-        tx = self._build_tx("createOrder", bytes_receiver, int(amount), int(rate), to_checksum_address(beneficiary))
+        tx = self._build_tx("createOrder", bytes_receiver, int(amount), int(rate), to_checksum_address(beneficiary), int(chain_id))
         if tx:
             return self._send_tx(tx)
         return None
@@ -233,6 +240,15 @@ class UntronV2CLI:
             print(f"  Available: {result[0]}")
             print(f"  Rate: {result[1]}")
         return result
+    
+    def get_chain_info(self, chain_id):
+        """Get chain info"""
+        result = self._call_function("chainInfo", int(chain_id))
+        print(f"Chain info for {chain_id}:")
+        print(f"  OFT: {result[0]}")
+        print(f"  DST EID: {result[1]}")
+        print(f"  USDT Fee: {result[2]}")
+        return result
 
     def get_receiver(self, receiver):
         """Get receiver information"""
@@ -252,7 +268,7 @@ class UntronV2CLI:
         return result
 
 def main():
-    parser = argparse.ArgumentParser(description='UntronV2 Contract CLI')
+    parser = argparse.ArgumentParser(description='UntronV2.1 Contract CLI')
     
     # Global arguments
     parser.add_argument('--rpc', help='RPC URL')
@@ -274,6 +290,9 @@ def main():
     
     parser_receiver = subparsers.add_parser('get-receiver', help='Get receiver info')
     parser_receiver.add_argument('receiver', help='Receiver ID (base58check encoded Tron address)')
+
+    parser_chain_info = subparsers.add_parser('get-chain-info', help='Get chain info')
+    parser_chain_info.add_argument('chain_id', type=int, help='Chain ID')
     
     # Write function subparsers
     parser_set_creator = subparsers.add_parser('set-creator', help='Set allowed order creator')
@@ -285,6 +304,12 @@ def main():
     
     parser_set_prover = subparsers.add_parser('set-prover', help='Set prover address')
     parser_set_prover.add_argument('prover', help='Prover address')
+
+    parser_set_chain_info = subparsers.add_parser('set-chain-info', help='Set chain info')
+    parser_set_chain_info.add_argument('chain_id', type=int, help='Chain ID')
+    parser_set_chain_info.add_argument('oft', help='OFT address')
+    parser_set_chain_info.add_argument('dst_eid', type=int, help='Destination EID')
+    parser_set_chain_info.add_argument('usdt_fee', type=int, help='USDT fee')
     
     parser_deposit = subparsers.add_parser('deposit', help='Deposit funds')
     parser_deposit.add_argument('amount', type=int, help='Amount to deposit')
@@ -304,7 +329,8 @@ def main():
     parser_create_order.add_argument('amount', type=int, help='Order amount')
     parser_create_order.add_argument('rate', type=int, help='Order rate')
     parser_create_order.add_argument('beneficiary', help='Beneficiary address')
-    
+    parser_create_order.add_argument('chain_id', type=int, help='Chain ID')
+
     parser_set_claim = subparsers.add_parser('set-claim', help='Set a claim')
     parser_set_claim.add_argument('receiver', help='Receiver ID (base58check encoded Tron address)')
     parser_set_claim.add_argument('amount', type=int, help='Claim amount')
@@ -339,12 +365,16 @@ def main():
         cli.get_liquidity_provider(args.address)
     elif args.command == 'get-receiver':
         cli.get_receiver(args.receiver)
+    elif args.command == 'get-chain-info':
+        cli.get_chain_info(args.chain_id)
     elif args.command == 'set-creator':
         cli.set_order_creator(args.creator, args.allowed)
     elif args.command == 'set-duration':
         cli.set_order_duration(args.duration)
     elif args.command == 'set-prover':
         cli.set_prover(args.prover)
+    elif args.command == 'set-chain-info':
+        cli.set_chain_info(args.chain_id, args.oft, args.dst_eid, args.usdt_fee)
     elif args.command == 'deposit':
         cli.deposit(args.amount, args.rate)
     elif args.command == 'withdraw':
@@ -354,7 +384,7 @@ def main():
     elif args.command == 'remove-receivers':
         cli.remove_receivers(args.receivers)
     elif args.command == 'create-order':
-        cli.create_order(args.receiver, args.amount, args.rate, args.beneficiary)
+        cli.create_order(args.receiver, args.amount, args.rate, args.beneficiary, args.chain_id)
     elif args.command == 'set-claim':
         cli.set_claim(args.receiver, args.amount)
     elif args.command == 'prove-claim':

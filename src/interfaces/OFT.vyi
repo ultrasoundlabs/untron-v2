@@ -1,0 +1,34 @@
+# Vyper interface for LayerZero's OFT bridge contracts
+# Ported from https://github.com/LayerZero-Labs/LayerZero-v2/blob/592625b9e5967643853476445ffe0e777360b906/packages/layerzero-v2/evm/oapp/contracts/oft/interfaces/IOFT.sol
+
+struct SendParam:
+    dstEid: uint32 # Destination endpoint ID.
+    to: bytes32 # Recipient address.
+    amountLD: uint256 # Amount to send in local decimals.
+    minAmountLD: uint256 # Minimum amount to send in local decimals.
+    extraOptions: Bytes[1024] # Additional options supplied by the caller to be used in the LayerZero message.
+    composeMsg: Bytes[1024] # The composed message for the send() operation.
+    oftCmd: Bytes[1024] # The OFT command to be executed, unused in default OFT implementations.
+
+struct MessagingFee:
+    nativeFee: uint256
+    lzTokenFee: uint256
+
+struct MessagingReceipt:
+    guid: bytes32
+    nonce: uint64
+    fee: MessagingFee
+
+struct OFTReceipt:
+    amountSentLD: uint256 # Amount of tokens ACTUALLY debited from the sender in local decimals.
+    amountReceivedLD: uint256 # Amount of tokens to be received on the remote side.
+
+@external
+@view
+def quoteSend(_sendParam: SendParam, _payInLzToken: bool) -> MessagingFee:
+    ...
+
+@external
+@payable
+def send(_sendParam: SendParam, _fee: MessagingFee, _refundAddress: address) -> (MessagingReceipt, OFTReceipt):
+    ...

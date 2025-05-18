@@ -11,14 +11,14 @@
 # - In return, LPs' locked USDT is sent to Order Creators' 
 #   specified "beneficiaries" on the deployment chain
 #
-# Dependencies:
-# - snekmate/auth: For ownership management
-# - IERC20: For USDT token interactions
-# - IProver: For ZK-based cross-chain transfer verification
+# V2.1 is a fork of V2 that adds USDT0 (LayerZero) bridge integration
+# for native multichainness
 
 # Imports
 from lib.github.pcaversaccio.snekmate.src.snekmate.auth import ownable
 from ethereum.ercs import IERC20
+
+from src.interfaces import OFT
 
 # Initialize ownable module for access control
 initializes: ownable
@@ -60,13 +60,15 @@ event OrderCreated:
     amount: uint256               # Amount of Tron USDT to be sent
     rate: uint256                 # Exchange rate for the order
     timestamp: uint256            # Order creation timestamp
-    beneficiary: indexed(address) # Address to receive USDT on deployment chain
+    beneficiary: indexed(address) # Address to receive USDT on destination chain
+    chainId: uint256              # Chain ID of the destination chain
 
 event OrderClosed:
     receiver: indexed(bytes20)    # Tron address associated with the closed order
     lp: indexed(address)          # LP who owns the receiver address
     atAmount: uint256             # Amount of Tron USDT that was actually sent
-    beneficiary: indexed(address) # Address that received the USDT on deployment chain
+    beneficiary: indexed(address) # Address that received the USDT on destination chain
+    chainId: uint256              # Chain ID of the destination chain
 
 event ClaimUpdated:
     receiver: indexed(bytes20)  # Tron address associated with the order
@@ -93,6 +95,10 @@ orderDuration: public(uint256)
 # Can be a ZK prover, TEE verifier, or trusted oracle
 prover: public(IProver)
 
+# Chain ID -> information that's needed to initiate bridging to that chain
+# Needed to create orders that will yield the funds on a chain different from the deployment chain
+chainInfo: public(HashMap[uint256, ChainInfo])
+
 # Structs
 # Data structures for managing LPs, receivers, and orders
 
@@ -115,8 +121,15 @@ struct Order:
     amount: uint256   # Amount of Tron USDT to be sent
     rate: uint256     # Exchange rate for the transfer
     timestamp: uint256  # When the order was created
-    beneficiary: address  # Who receives the USDT on deployment chain
+    beneficiary: address # Who receives USDT on the destination chain
+    chainId: uint256 # ID of the destination chain
     claims: Claims    # Amount claims from both parties
+
+# Information about the chain related to bridging
+struct ChainInfo:
+    oft: address # OFT contract that is used to bridge to that chain
+    dstEid: uint32 # LZ's internal chain "EID" of that chain
+    usdtFee: uint256 # Amount of USDT that is deducted from the negotiated amount to cover LZ's bridging fees that Untron V2.1 covers
 
 # Claims from both parties in an order
 # Used to resolve orders either by agreement or dispute
@@ -142,6 +155,15 @@ def __init__(_usdt: address):
 
 # Access Control Functions
 # Functions for managing contract configuration and permissions
+
+@external
+def setChainInfo(chainId: uint256, oft: address, dstEid: uint32, usdtFee: uint256):
+    """
+    Sets the information for a chain.
+    Only callable by the contract owner.
+    """
+    assert msg.sender == ownable.owner
+    self.chainInfo[chainId] = ChainInfo(oft=oft, dstEid=dstEid, usdtFee=usdtFee)
 
 @external
 def setOrderCreator(creator: address, allowed: bool):
@@ -264,7 +286,7 @@ def removeReceivers(receivers: DynArray[bytes20, 1024]):
 # Functions for creating and resolving orders
 
 @external
-def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: address):
+def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: address, chainId: uint256):
     """
     Creates a new order for transferring Tron USDT.
     Requires:
@@ -278,6 +300,9 @@ def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: 
     
     # Ensure the receiver address isn't already being used in an active order
     assert self.receivers[receiver].order.creator == empty(address), "receiver busy"
+
+    # Ensure the chain ID is either the deployment chain or a chain that's supported by the contract
+    assert chainId == chain.id or self.chainInfo[chainId].oft != empty(address), "unsupported chain"
     
     # Get the LP who owns this receiver address
     lp: address = self.receivers[receiver].owner
@@ -307,6 +332,7 @@ def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: 
         rate=rate,                    # Exchange rate for the transfer
         timestamp=block.timestamp,    # When the order was created
         beneficiary=beneficiary,      # Who gets the USDT on deployment chain
+        chainId=chainId,              # Chain ID of the destination chain
         claims=claims                 # Initial claims from both parties
     )
     
@@ -314,7 +340,7 @@ def createOrder(receiver: bytes20, amount: uint256, rate: uint256, beneficiary: 
     self.receivers[receiver].order = order
     
     # Emit event for off-chain tracking
-    log OrderCreated(receiver, lp, msg.sender, amount, order.rate, order.timestamp, beneficiary)
+    log OrderCreated(receiver, lp, msg.sender, amount, order.rate, order.timestamp, beneficiary, chainId)
 
 @external
 def setClaim(receiver: bytes20, amount: uint256):
@@ -365,13 +391,6 @@ def closeOrder(receiver: bytes20, atAmount: uint256):
             orderAmount                                # Amount originally requested
         ) * orderRate // 1000000                      # Convert to deployment chain USDT
     
-    # Get the beneficiary address from the order
-    beneficiary: address = self.receivers[receiver].order.beneficiary
-    
-    # If there's an amount to send to the beneficiary, transfer it
-    if surrenderAmount > 0:
-        extcall IERC20(usdt).transfer(beneficiary, surrenderAmount)  # Transfer USDT to beneficiary
-    
     # Get the LP's address and return any unused liquidity
     lp: address = self.receivers[receiver].owner
     self.liquidityProviders[lp].available += reimbursementAmount  # Return unused USDT to LP
@@ -380,8 +399,99 @@ def closeOrder(receiver: bytes20, atAmount: uint256):
     # This marks the receiver as available for new orders
     self.receivers[receiver].order.creator = empty(address)
 
+    # Get the beneficiary address and destination chain ID from the order
+    beneficiary: address = self.receivers[receiver].order.beneficiary
+    chainId: uint256 = self.receivers[receiver].order.chainId
+    
+    # If there's an amount to send to the beneficiary, transfer it
+    if surrenderAmount > 0:
+        self.processTransfer(beneficiary, chainId, surrenderAmount)
+
     # Emit event for off-chain tracking
-    log OrderClosed(receiver, lp, atAmount, beneficiary)
+    log OrderClosed(receiver, lp, atAmount, beneficiary, chainId)
+
+@internal
+def processTransfer(beneficiary: address, chainId: uint256, amount: uint256):
+    """
+    Internal function to process a transfer.
+    """
+
+    # if transfer.oft is not specified, the beneficiary simply
+    # wants to receive USDT on the deployment chain to their address.
+    # if it is specified, then we will bridge the negotiated amount
+    # using one of LZ's OFT bridges (probably USDT0 or Stargate)
+    if chainId == chain.id:
+        # send the negotiated amount to the beneficiary address
+        # as a simple ERC20 transfer
+        extcall IERC20(usdt).transfer(beneficiary, amount)
+    else:
+        # initialize OFT contract with OFT interface
+        oftAddress: address = self.chainInfo[chainId].oft
+        oft: OFT = OFT(oftAddress)
+
+        # Get the USDT fee for this chain, capped at the transfer amount
+        # This fee covers LayerZero's bridging costs that Untron V2.1 pays
+        usdtFee: uint256 = min(self.chainInfo[chainId].usdtFee, amount)
+
+        # If there's a fee to collect, transfer it to the contract owner
+        if usdtFee > 0:
+            extcall IERC20(usdt).transfer(ownable.owner, usdtFee)
+
+        # If the entire amount is consumed by fees, return early
+        if amount == usdtFee:
+            return
+
+        # Deduct the fee from the amount to be bridged
+        amount -= usdtFee
+
+        # build send params to calculate the fees and bridge funds after
+        sendParam: OFT.SendParam = OFT.SendParam(
+            # LZ's internal chain "EID". it's specified by the order creator
+            # because it's more efficient to fetch off-chain and making
+            # it arbitrary doesn't impose any security issues (worst-case the bridge would fail)
+            dstEid=self.chainInfo[chainId].dstEid,
+            # recipient of the bridging action. OFT asks it in bytes32,
+            # and if the recipient is an EVM address (20 bytes), it wants
+            # the address left-padded. we make it explicitly left-padded
+            # here because Vyper's type conversion logic is very counter-intuitive.
+            to=convert(convert(convert(beneficiary, uint160), uint256), bytes32),
+            # input amount. it MUST be the amount the parties negotiated on, because
+            # the rest of the order size is refunded to the LP.
+            amountLD=amount,
+            # minimum output amount. LayerZero protocol guarantees fair minimum output,
+            # so hardcoding it to 0 is safe enough.
+            minAmountLD=0,
+            # extra options to be supplied in LZ message. it's 0x0003 everywhere we could find,
+            # so we hardcoded it here
+            extraOptions=b"\x00\x03",
+            # "The composed message for the send() operation" sic docs
+            # not used
+            composeMsg=empty(Bytes[1024]),
+            # "The OFT command to be executed, unused in default OFT implementations." sic docs
+            oftCmd=empty(Bytes[1024])
+        )
+
+        # we call OFT's "quoteSend" view function
+        # to get how much ETH we will need to pin to the .send() function call.
+        # this ETH is used to cover protocol fees and depends on send parameters,
+        # which is why we provide them here.
+        # "False" stands for paying protocol fees in ETH.
+        # AFAIK the protocol supports paying in ZRO tokens (would be True here),
+        # but this is not used in most OFT protocols and would add unnecessary complexity to this contract
+        fee: OFT.MessagingFee = staticcall oft.quoteSend(sendParam, False)
+
+        # we approve the amount that the parties negotiated on to the OFT contract
+        # so that it can spend it to the bridging operation
+        extcall IERC20(usdt).approve(oftAddress, amount)
+
+        # we call OFT's "send" function to initiate bridging.
+        # value is the amount of ETH we need to pin to the function call,
+        # we get it from OFT's "quoteSend" view function.
+        # _sendParam and _fee are self-explanatory from info above,
+        # _refundAddress is the contract's owner because if bridging fails
+        # then the problem is probably on the contract's side and needs
+        # to be managed by the contract owner.
+        extcall oft.send(sendParam, fee, ownable.owner, value=fee.nativeFee)
 
 @external
 def proveClaim(receiver: bytes20, atAmount: uint256, proof: Bytes[4096]):
@@ -404,3 +514,16 @@ def proveClaim(receiver: bytes20, atAmount: uint256, proof: Bytes[4096]):
 
     # If proof is valid, close the order and distribute funds
     self.closeOrder(receiver, atAmount)
+
+# ETH Management Functions
+# Functions for managing ETH that's used to pay for LZ protocol fees
+
+@external 
+def drain():
+    assert msg.sender == ownable.owner
+    send(ownable.owner, self.balance)
+
+@external
+@payable
+def __default__():
+    pass # this function is to supply the contract with ETH to pay for LZ protocol fees
