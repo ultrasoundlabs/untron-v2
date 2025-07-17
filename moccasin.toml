@@ -71,5 +71,6 @@ prompt_live = true
 [networks.contracts]
 UntronV2 = {  deployer_script = "deploy.py" }
 UntronV2_1 = { deployer_script = "deploy_v2_1.py" }
+UntronV2_2 = { deployer_script = "deploy_v2_2.py" }
 
 # You can view all configuration options at https://cyfrin.github.io/moccasin/all_moccasin_toml_parameters.html
